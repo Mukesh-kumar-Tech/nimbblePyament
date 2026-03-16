@@ -16,20 +16,7 @@ class BillController extends Controller
 
         $apiUrl = config('services.mobikwik.url');
 
-        $payload = [
-            'adParams' => (object) [],
-            'cn' => $request->consumer_number,
-            'uid' => config('services.mobikwik.uid'),
-            'pswd' => config('services.mobikwik.pwd'),
-            'op' => '194',
-            'cir' => 18,
-            'agentCode' => 'MK01MK57AGTU00000001',
-            'initiatingChannel' => 'agent',
-            'terminalId' => 4,
-            'geocode' => '30.8502,75.9266',
-            'postalCode' => '141010',
-            'agentMobile' => '8360709475',
-        ];
+ 
 
         try {
 
