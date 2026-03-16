@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'mobikwik' => [
+        'url' => env('MOBIKWIK_API_URL'),
+        'uid' => env('MOBIKWIK_UID'),
+        'pwd' => env('MOBIKWIK_PWD'),
+    ],
+
 ];
