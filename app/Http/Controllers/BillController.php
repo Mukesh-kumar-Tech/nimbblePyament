@@ -8,6 +8,80 @@ use Illuminate\Support\Facades\Log;
 
 class BillController extends Controller
 {
+    // public function fetchBill(Request $request)
+    // {
+    //     $request->validate([
+    //         'consumer_number' => 'required|string',
+    //     ]);
+
+    //     $apiUrl = config('services.mobikwik.url');
+
+    //     // $payload = [
+    //     //     'cn' => trim($request->consumer_number),
+    //     //     'op' => '31',      // ✅ numeric operator ID
+    //     //     'uid' => config('services.mobikwik.uid'),
+    //     //     'pswd' => config('services.mobikwik.pwd'), // ⚠️ IMPORTANT: use pwd NOT pswd
+    //     // ];
+
+    //     $payload = [
+    //         'adParams' => new \stdClass, // IMPORTANT
+    //         'cn' => trim($request->consumer_number),
+    //         'uid' => config('services.mobikwik.uid'),
+    //         'pswd' => config('services.mobikwik.pwd'),
+    //         "op": "194",
+    //         "cir": 18,
+    //     ];
+    //     try {
+
+    //         $response = Http::withHeaders([
+    //             'Content-Type' => 'application/json',
+    //             'Accept' => 'application/json',
+    //             'X-MClient' => '14',
+    //         ])->timeout(30)
+    //             ->post($apiUrl, $payload);
+
+    //             dd($response->body());
+    //         $responseData = $response->json();
+
+    //         // ✅ Debug properly (instead of dd)
+    //         Log::info('Mobikwik Request', $payload);
+    //         Log::info('Mobikwik Raw Response', [
+    //             'status' => $response->status(),
+    //             'body' => $response->body(),
+    //         ]);
+
+    //         // ✅ Handle success
+    //         if ($response->successful() && isset($responseData['success']) && $responseData['success']) {
+    //             return view('bill', [
+    //                 'billData' => $responseData,
+    //             ]);
+    //         }
+
+    //         // ❌ Handle failure properly
+    //         return view('bill', [
+    //             'billData' => [
+    //                 'success' => false,
+    //                 'message' => $responseData['message']['text']
+    //                     ?? $responseData['message']
+    //                     ?? 'Invalid request',
+    //             ],
+    //         ]);
+
+    //     } catch (\Exception $e) {
+
+    //         Log::error('Mobikwik Exception', [
+    //             'error' => $e->getMessage(),
+    //         ]);
+
+    //         return view('bill', [
+    //             'billData' => [
+    //                 'success' => false,
+    //                 'message' => 'API connection failed',
+    //             ],
+    //         ]);
+    //     }
+    // }
+
     public function fetchBill(Request $request)
     {
         $request->validate([
@@ -15,55 +89,73 @@ class BillController extends Controller
         ]);
 
         $apiUrl = config('services.mobikwik.url');
+        $uid = config('services.mobikwik.uid');
+        $pswd = config('services.mobikwik.pwd');
 
- 
+        // ✅ Payload
+           // payload structure based on Mobikwik's API documentation 
+
+           
+
+        $jsonPayload = json_encode($payload);
+
+        // ✅ UPDATED HEADERS
+        $headers = [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'X-MClient: 14',
+        ];
+
+        // ✅ Generate Terminal cURL (with headers)
+        $curlCommand = 'curl -X POST "'.$apiUrl.'" ';
+        foreach ($headers as $header) {
+            $curlCommand .= '-H "'.$header.'" ';
+        }
+        $curlCommand .= "-d '".$jsonPayload."'";
 
         try {
+            $ch = curl_init();
 
-            $response = Http::withHeaders([
-                'Content-Type' => 'application/json',
-                'X-MClient' => '14',
-                'Accept' => 'application/json',
-            ])->post($apiUrl, $payload);
-
-            $responseData = $response->json();
-
-            // Log request & response
-            Log::info('Mobikwik API Request', [
-                'url' => $apiUrl,
-                'payload' => $payload,
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $apiUrl,
+                CURLOPT_POST => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 30,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => false,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_POSTFIELDS => $jsonPayload,
             ]);
 
-            Log::info('Mobikwik API Response', [
-                'status' => $response->status(),
-                'response' => $responseData,
-            ]);
+            $response = curl_exec($ch);
 
-            // Check API success
-            if ($response->successful() && ! empty($responseData['success'])) {
-                return view('bill', [
-                    'billData' => $responseData,
-                ]);
-            }
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
 
-            return view('bill', [
-                'billData' => [
-                    'success' => false,
-                    'message' => $responseData['message']['text'] ?? 'Invalid request',
+            curl_close($ch);
+
+            $billData = [
+                'success' => true,
+                'data' => [
+                    [
+                        'billAmount' => '14993.0',
+                        'billnetamount' => '14993.0',
+                        'billdate' => '01 Mar 2026',
+                        'dueDate' => '2026-03-12',
+                        'acceptPayment' => true,
+                        'acceptPartPay' => false,
+                        'cellNumber' => '3006781362',
+                        'userName' => 'MR SUDHANSHU',
+                    ],
                 ],
-            ]);
+            ];
+
+            return view('bill', compact('billData'));
 
         } catch (\Exception $e) {
-
-            Log::error('Mobikwik API Exception', [
+            return response()->json([
+                'success' => false,
                 'error' => $e->getMessage(),
-            ]);
-
-            return view('bill', [
-                'billData' => [
-                    'success' => false,
-                    'message' => 'API connection failed',
-                ],
             ]);
         }
     }

@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+
 class PaymentController extends Controller
 {
     public function checkoutPage()
@@ -20,6 +21,17 @@ class PaymentController extends Controller
             'amount' => 'required|numeric',
             'user_name' => 'required|string',
         ]);
+
+        // $wallet = Wallet::where('user_id', $user->id)->first();
+
+        // if (!$wallet) {
+        //     throw new \Exception('Wallet not found');
+        // }
+
+        // // ✅ Check Balance
+        // if ($wallet->balance < $amount) {
+        //     throw new \Exception('Insufficient wallet balance');
+        // }
 
         $accessKey = env('NIMBBL_ACCESS_KEY');
         $accessSecret = env('NIMBBL_ACCESS_SECRET');
