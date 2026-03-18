@@ -17,296 +17,349 @@ class PaymentController extends Controller
 
     public function createOrder(Request $request)
     {
-        $request->validate([
-            'amount' => 'required|numeric',
-            'user_name' => 'required|string',
-        ]);
+        try {
 
-        // $wallet = Wallet::where('user_id', $user->id)->first();
+            $request->validate([
+                'amount' => 'required|numeric',
+                'user_name' => 'required|string',
+            ]);
 
-        // if (!$wallet) {
-        //     throw new \Exception('Wallet not found');
-        // }
+            // $wallet = Wallet::where('user_id', $user->id)->first();
 
-        // // ✅ Check Balance
-        // if ($wallet->balance < $amount) {
-        //     throw new \Exception('Insufficient wallet balance');
-        // }
+            // if (!$wallet) {
+            //     throw new \Exception('Wallet not found');
+            // }
 
-        $accessKey = env('NIMBBL_ACCESS_KEY');
-        $accessSecret = env('NIMBBL_ACCESS_SECRET');
-        $baseUrl = env('NIMBBL_BASE_URL', 'https://api.nimbbl.tech');
+            // // ✅ Check Balance
+            // if ($wallet->balance < $amount) {
+            //     throw new \Exception('Insufficient wallet balance');
+            // }
 
-        // STEP 1 Generate Token
-        $tokenUrl = $baseUrl.'/api/v3/generate-token';
-        $tokenPayload = [
-            'access_key' => $accessKey,
-            'access_secret' => $accessSecret,
-        ];
+            $accessKey = env('NIMBBL_ACCESS_KEY');
+            $accessSecret = env('NIMBBL_ACCESS_SECRET');
+            $baseUrl = env('NIMBBL_BASE_URL', 'https://api.nimbbl.tech');
 
-        $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'REQUEST');
+            // STEP 1 Generate Token
+            $tokenUrl = $baseUrl.'/api/v3/generate-token';
+            $tokenPayload = [
+                'access_key' => $accessKey,
+                'access_secret' => $accessSecret,
+            ];
 
-        $tokenResponse = Http::post($tokenUrl, $tokenPayload);
+            $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'REQUEST');
 
-        $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'RESPONSE');
+            $tokenResponse = Http::post($tokenUrl, $tokenPayload);
 
-        if ($tokenResponse->failed()) {
+            $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'RESPONSE');
+
+            if ($tokenResponse->failed()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Token generation failed',
+                    'nimbbl_response' => $tokenResponse->body(),
+                ], 500);
+            }
+
+            $token = $tokenResponse['token'];
+
+            // STEP 2 Create Order
+            $orderUrl = $baseUrl.'/api/v3/create-order';
+            $amount = (float) $request->input('amount');
+            $userName = $request->input('user_name');
+
+            $payload = [
+                'amount_before_tax' => $amount,
+                'tax' => 0,
+                'total_amount' => $amount,
+                'currency' => 'INR',
+                'invoice_id' => 'INV_'.time(),
+
+                'user' => [
+                    'email' => 'test@gmail.com',
+                    'first_name' => $userName,
+                    'last_name' => 'Kumar',
+                    'mobile_number' => '9876543210',
+                    'country_code' => '+91',
+                ],
+
+                'callback_url' => url('/payment-callback'),
+            ];
+
+            $this->customLog($orderUrl, 'POST', ['Authorization' => 'Bearer '.$token], $payload, 'REQUEST');
+
+            $response = Http::withToken($token)
+                ->acceptJson()
+                ->post($orderUrl, $payload);
+
+            $this->customLog($orderUrl, 'POST', $response->headers(), $response->json(), 'RESPONSE');
+
+            // Show real API response for debugging
+            if ($response->failed()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Order creation failed',
+                    'nimbbl_response' => $response->body(),
+                ], 500);
+            }
+
+            $data = $response->json();
+
+            $orderId = $data['order_id'] ?? null;
+            $invoiceId = $payload['invoice_id'];
+
+            Transaction::create([
+                'invoice_id' => $invoiceId,
+                'order_id' => $orderId,
+                'consumer_number' => $request->consumer_number ?? null,
+                'amount' => $amount,
+                'currency' => 'INR',
+                'status' => 'INITIATED',
+                'raw_response' => json_encode($data),
+            ]);
+
+            return response()->json([
+                'status' => true,
+                'token' => $data['token'] ?? null, // This is the access token for the checkout JS from the order
+                'order_id' => $data['order_id'] ?? null,
+                'full_response' => $data,
+            ]);
+
+        } catch (\Exception $e) {
+
+            // ✅ Log error properly
+            \Log::error('Create Order Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'status' => false,
-                'message' => 'Token generation failed',
-                'nimbbl_response' => $tokenResponse->body(),
+                'message' => 'Something went wrong while creating order',
+                'error' => $e->getMessage(),
             ], 500);
         }
-
-        $token = $tokenResponse['token'];
-
-        // STEP 2 Create Order
-        $orderUrl = $baseUrl.'/api/v3/create-order';
-        $amount = (float) $request->input('amount');
-        $userName = $request->input('user_name');
-
-        $payload = [
-            'amount_before_tax' => $amount,
-            'tax' => 0,
-            'total_amount' => $amount,
-            'currency' => 'INR',
-            'invoice_id' => 'INV_'.time(),
-
-            'user' => [
-                'email' => 'test@gmail.com',
-                'first_name' => $userName,
-                'last_name' => 'Kumar',
-                'mobile_number' => '9876543210',
-                'country_code' => '+91',
-            ],
-
-            'callback_url' => url('/payment-callback'),
-        ];
-
-        $this->customLog($orderUrl, 'POST', ['Authorization' => 'Bearer '.$token], $payload, 'REQUEST');
-
-        $response = Http::withToken($token)
-            ->acceptJson()
-            ->post($orderUrl, $payload);
-
-        $this->customLog($orderUrl, 'POST', $response->headers(), $response->json(), 'RESPONSE');
-
-        // Show real API response for debugging
-        if ($response->failed()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Order creation failed',
-                'nimbbl_response' => $response->body(),
-            ], 500);
-        }
-
-        $data = $response->json();
-
-        $orderId = $data['order_id'] ?? null;
-        $invoiceId = $payload['invoice_id'];
-
-        Transaction::create([
-            'invoice_id' => $invoiceId,
-            'order_id' => $orderId,
-            'consumer_number' => $request->consumer_number ?? null,
-            'amount' => $amount,
-            'currency' => 'INR',
-            'status' => 'INITIATED',
-            'raw_response' => json_encode($data),
-        ]);
-
-        return response()->json([
-            'status' => true,
-            'token' => $data['token'] ?? null, // This is the access token for the checkout JS from the order
-            'order_id' => $data['order_id'] ?? null,
-            'full_response' => $data,
-        ]);
     }
 
     public function verifyPayment(Request $request)
     {
-        $this->customLog(url('/verify-payment'), 'POST', $request->headers->all(), $request->all(), 'VERIFY_PAYMENT_REQUEST');
+        try {
 
-        $secretKey = env('NIMBBL_ACCESS_SECRET');
+            $this->customLog(url('/verify-payment'), 'POST', $request->headers->all(), $request->all(), 'VERIFY_PAYMENT_REQUEST');
 
-        $transaction = $request->payload['transaction'] ?? null;
-        $order = $request->payload['order'] ?? null;
+            $secretKey = env('NIMBBL_ACCESS_SECRET');
 
-        if (! $transaction || ! $order) {
-            return response()->json(['success' => false, 'message' => 'Invalid payload'], 400);
-        }
+            $transaction = $request->payload['transaction'] ?? null;
+            $order = $request->payload['order'] ?? null;
 
-        $invoiceId = $order['invoice_id'];
-        $transactionId = $transaction['transaction_id'];
-        $amount = number_format($transaction['transaction_amount'], 2, '.', '');
-        $currency = $transaction['transaction_currency'];
-        $status = $transaction['status'];
-        $type = $transaction['transaction_type'];
-        $receivedSignature = $transaction['signature'] ?? '';
+            if (! $transaction || ! $order) {
+                return response()->json(['success' => false, 'message' => 'Invalid payload'], 400);
+            }
 
-        $this->customLog(url('/verify-payment'), 'DEBUG', [], [
-            'extracted_fields' => [
-                'invoice_id' => $invoiceId,
-                'transaction_id' => $transactionId,
-                'amount' => $amount,
-                'currency' => $currency,
-                'status' => $status,
-                'type' => $type,
-                'received_signature' => $receivedSignature,
-            ],
-        ], 'VERIFY_PAYMENT_EXTRACTED_DATA');
+            $invoiceId = $order['invoice_id'];
+            $transactionId = $transaction['transaction_id'];
+            $amount = number_format($transaction['transaction_amount'], 2, '.', '');
+            $currency = $transaction['transaction_currency'];
+            $status = $transaction['status'];
+            $type = $transaction['transaction_type'];
+            $receivedSignature = $transaction['signature'] ?? '';
 
-        $signatureData = $invoiceId.'|'.$transactionId.'|'.$amount.'|'.$currency.'|'.$status.'|'.$type;
-
-        $generatedSignature = hash_hmac('sha256', $signatureData, $secretKey);
-
-        if ($generatedSignature === $receivedSignature) {
-            $this->customLog(url('/verify-payment'), 'POST', [], [
-                'status' => 'success',
-                'message' => 'Signature Matched',
-                'comparison' => [
-                    'received_from_nimbbl' => $receivedSignature,
-                    'generated_by_server' => $generatedSignature,
-                ],
-                'raw_string_hashed' => $signatureData,
-                'invoice_id' => $invoiceId,
-                'transaction_id' => $transactionId,
-                'amount' => $amount,
-                'currency' => $currency,
-                'status' => $status,
-                'type' => $type,
-            ], 'VERIFY_PAYMENT_SIGNATURE_MATCH');
-
-            $txnResponse = $this->transactionEnquiry($transactionId);
-
-            $this->customLog(url('/transaction-enquiry'), 'POST', [], $txnResponse, 'TRANSACTION_ENQUIRY_RESPONSE');
-
-            // It returns an array 'transaction' containing the transaction objects.
-            $paymentStatus = $txnResponse['transaction'][0]['payment_status'] ?? null;
-
-            if ($paymentStatus === 'succeeded') {
-                $this->customLog(url('/verify-payment'), 'SUCCESS', [], [
-                    'message' => 'Payment verified and confirmed Successfully',
+            $this->customLog(url('/verify-payment'), 'DEBUG', [], [
+                'extracted_fields' => [
+                    'invoice_id' => $invoiceId,
                     'transaction_id' => $transactionId,
-                    'status' => $paymentStatus,
+                    'amount' => $amount,
+                    'currency' => $currency,
+                    'status' => $status,
+                    'type' => $type,
+                    'received_signature' => $receivedSignature,
+                ],
+            ], 'VERIFY_PAYMENT_EXTRACTED_DATA');
+
+            $signatureData = $invoiceId.'|'.$transactionId.'|'.$amount.'|'.$currency.'|'.$status.'|'.$type;
+
+            $generatedSignature = hash_hmac('sha256', $signatureData, $secretKey);
+
+            if ($generatedSignature === $receivedSignature) {
+
+                $this->customLog(url('/verify-payment'), 'POST', [], [
+                    'status' => 'success',
+                    'message' => 'Signature Matched',
+                    'comparison' => [
+                        'received_from_nimbbl' => $receivedSignature,
+                        'generated_by_server' => $generatedSignature,
+                    ],
+                    'raw_string_hashed' => $signatureData,
+                    'invoice_id' => $invoiceId,
+                    'transaction_id' => $transactionId,
+                    'amount' => $amount,
+                    'currency' => $currency,
+                    'status' => $status,
+                    'type' => $type,
+                ], 'VERIFY_PAYMENT_SIGNATURE_MATCH');
+
+                $txnResponse = $this->transactionEnquiry($transactionId);
+
+                $this->customLog(url('/transaction-enquiry'), 'POST', [], $txnResponse, 'TRANSACTION_ENQUIRY_RESPONSE');
+
+                // It returns an array 'transaction' containing the transaction objects.
+                $paymentStatus = $txnResponse['transaction'][0]['payment_status'] ?? null;
+
+                if ($paymentStatus === 'succeeded') {
+
+                    $this->customLog(url('/verify-payment'), 'SUCCESS', [], [
+                        'message' => 'Payment verified and confirmed Successfully',
+                        'transaction_id' => $transactionId,
+                        'status' => $paymentStatus,
+                    ], 'VERIFY_PAYMENT_RESPONSE');
+
+                    Transaction::where('invoice_id', $invoiceId)
+                        ->update([
+                            'transaction_id' => $transactionId,
+                            'status' => 'SUCCESS',
+                            'payment_type' => $type,
+                            'signature' => $receivedSignature,
+                        ]);
+
+                    $wallet = Wallet::where('user_id', 1)->first();
+
+                    if ($wallet) {
+                        $wallet->balance = $wallet->balance - $amount;
+                        $wallet->save();
+
+                        WalletTransaction::create([
+                            'user_id' => 1,
+                            'transaction_id' => $transactionId,
+                            'amount' => $amount,
+                            'type' => 'DEBIT',
+                        ]);
+                    }
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Payment paid successfully',
+                    ]);
+                }
+
+                $this->customLog(url('/verify-payment'), 'FAILURE', [], [
+                    'message' => 'Payment not confirmed from transaction enquiry',
+                    'nimbbl_status' => $paymentStatus,
                 ], 'VERIFY_PAYMENT_RESPONSE');
 
                 Transaction::where('invoice_id', $invoiceId)
                     ->update([
                         'transaction_id' => $transactionId,
-                        'status' => 'SUCCESS',
-                        'payment_type' => $type,
-                        'signature' => $receivedSignature,
+                        'status' => 'FAILED',
                     ]);
-
-                $wallet = Wallet::where('user_id', 1)->first();
-
-                if ($wallet) {
-                    $wallet->balance = $wallet->balance - $amount;
-                    $wallet->save();
-
-                    WalletTransaction::create([
-                        'user_id' => 1,
-                        'transaction_id' => $transactionId,
-                        'amount' => $amount,
-                        'type' => 'DEBIT',
-                    ]);
-                }
 
                 return response()->json([
-                    'success' => true,
-                    'message' => 'Payment paid successfully',
+                    'success' => false,
+                    'message' => 'Payment not confirmed from transaction enquiry',
+                    'nimbbl_status' => $paymentStatus,
                 ]);
             }
 
-            $this->customLog(url('/verify-payment'), 'FAILURE', [], [
-                'message' => 'Payment not confirmed from transaction enquiry',
-                'nimbbl_status' => $paymentStatus,
+            $this->customLog(url('/verify-payment'), 'ERROR', [], [
+                'status' => 'failure',
+                'message' => 'Signature Mismatch',
+                'comparison' => [
+                    'received_from_nimbbl' => $receivedSignature,
+                    'generated_by_server' => $generatedSignature,
+                ],
+                'raw_string_hashed' => $signatureData,
+                'fields' => [
+                    'invoice_id' => $invoiceId,
+                    'transaction_id' => $transactionId,
+                    'amount' => $amount,
+                    'currency' => $currency,
+                    'status' => $status,
+                    'type' => $type,
+                ],
             ], 'VERIFY_PAYMENT_RESPONSE');
 
             Transaction::where('invoice_id', $invoiceId)
                 ->update([
                     'transaction_id' => $transactionId,
-                    'status' => 'FAILED',
+                    'status' => 'SIGNATURE_FAILED',
                 ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Payment not confirmed from transaction enquiry',
-                'nimbbl_status' => $paymentStatus,
+                'message' => 'Invalid signature',
             ]);
+
+        } catch (\Exception $e) {
+
+            // ✅ Error Logging
+            \Log::error('Verify Payment Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Something went wrong in payment verification',
+                'error' => $e->getMessage(),
+            ], 500);
         }
-
-        $this->customLog(url('/verify-payment'), 'ERROR', [], [
-            'status' => 'failure',
-            'message' => 'Signature Mismatch',
-            'comparison' => [
-                'received_from_nimbbl' => $receivedSignature,
-                'generated_by_server' => $generatedSignature,
-            ],
-            'raw_string_hashed' => $signatureData,
-            'fields' => [
-                'invoice_id' => $invoiceId,
-                'transaction_id' => $transactionId,
-                'amount' => $amount,
-                'currency' => $currency,
-                'status' => $status,
-                'type' => $type,
-            ],
-        ], 'VERIFY_PAYMENT_RESPONSE');
-
-        Transaction::where('invoice_id', $invoiceId)
-            ->update([
-                'transaction_id' => $transactionId,
-                'status' => 'SIGNATURE_FAILED',
-            ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Invalid signature',
-        ]);
     }
 
     public function transactionEnquiry($transactionId)
     {
-        $accessKey = env('NIMBBL_ACCESS_KEY');
-        $accessSecret = env('NIMBBL_ACCESS_SECRET');
-        $baseUrl = env('NIMBBL_BASE_URL', 'https://api.nimbbl.tech');
+        try {
 
-        // STEP 1 Generate Token for Enquiry
-        $tokenUrl = $baseUrl.'/api/v3/generate-token';
-        $tokenPayload = [
-            'access_key' => $accessKey,
-            'access_secret' => $accessSecret,
-        ];
+            $accessKey = env('NIMBBL_ACCESS_KEY');
+            $accessSecret = env('NIMBBL_ACCESS_SECRET');
+            $baseUrl = env('NIMBBL_BASE_URL', 'https://api.nimbbl.tech');
 
-        $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'ENQUIRY_TOKEN_REQUEST');
+            // STEP 1 Generate Token for Enquiry
+            $tokenUrl = $baseUrl.'/api/v3/generate-token';
+            $tokenPayload = [
+                'access_key' => $accessKey,
+                'access_secret' => $accessSecret,
+            ];
 
-        $tokenResponse = Http::post($tokenUrl, $tokenPayload);
+            $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'ENQUIRY_TOKEN_REQUEST');
 
-        $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'ENQUIRY_TOKEN_RESPONSE');
+            $tokenResponse = Http::post($tokenUrl, $tokenPayload);
 
-        if ($tokenResponse->failed()) {
-            return ['error' => 'Token generation failed for enquiry'];
+            $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'ENQUIRY_TOKEN_RESPONSE');
+
+            if ($tokenResponse->failed()) {
+                return ['error' => 'Token generation failed for enquiry'];
+            }
+
+            $token = $tokenResponse['token'];
+
+            // STEP 2 Perform Transaction Enquiry
+            $enquiryUrl = $baseUrl.'/api/v3/transaction-enquiry';
+            $enquiryPayload = [
+                'transaction_id' => $transactionId,
+            ];
+
+            $this->customLog($enquiryUrl, 'POST', ['Authorization' => 'Bearer '.$token], $enquiryPayload, 'TRANSACTION_ENQUIRY_REQUEST');
+
+            $response = Http::withToken($token)
+                ->acceptJson()
+                ->post($enquiryUrl, $enquiryPayload);
+
+            $this->customLog($enquiryUrl, 'POST', $response->headers(), $response->json(), 'TRANSACTION_ENQUIRY_RESPONSE');
+
+            return $response->json();
+
+        } catch (\Exception $e) {
+
+            // ✅ Log error
+            \Log::error('Transaction Enquiry Error', [
+                'transaction_id' => $transactionId,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return [
+                'error' => 'Something went wrong during transaction enquiry',
+                'message' => $e->getMessage(),
+            ];
         }
-
-        $token = $tokenResponse['token'];
-
-        // STEP 2 Perform Transaction Enquiry
-        $enquiryUrl = $baseUrl.'/api/v3/transaction-enquiry';
-        $enquiryPayload = [
-            'transaction_id' => $transactionId,
-        ];
-
-        $this->customLog($enquiryUrl, 'POST', ['Authorization' => 'Bearer '.$token], $enquiryPayload, 'TRANSACTION_ENQUIRY_REQUEST');
-
-        $response = Http::withToken($token)
-            ->acceptJson()
-            ->post($enquiryUrl, $enquiryPayload);
-
-        $this->customLog($enquiryUrl, 'POST', $response->headers(), $response->json(), 'TRANSACTION_ENQUIRY_RESPONSE');
-
-        return $response->json();
     }
 
     public function getOrder($order_id)

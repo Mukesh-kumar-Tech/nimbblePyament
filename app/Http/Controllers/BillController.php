@@ -82,38 +82,42 @@ class BillController extends Controller
     //     }
     // }
 
+    
     public function fetchBill(Request $request)
     {
-        $request->validate([
-            'consumer_number' => 'required|string',
-        ]);
-
-        $apiUrl = config('services.mobikwik.url');
-        $uid = config('services.mobikwik.uid');
-        $pswd = config('services.mobikwik.pwd');
-
-        // ✅ Payload
-           // payload structure based on Mobikwik's API documentation 
-
-           
-
-        $jsonPayload = json_encode($payload);
-
-        // ✅ UPDATED HEADERS
-        $headers = [
-            'Content-Type: application/json',
-            'Accept: application/json',
-            'X-MClient: 14',
-        ];
-
-        // ✅ Generate Terminal cURL (with headers)
-        $curlCommand = 'curl -X POST "'.$apiUrl.'" ';
-        foreach ($headers as $header) {
-            $curlCommand .= '-H "'.$header.'" ';
-        }
-        $curlCommand .= "-d '".$jsonPayload."'";
-
         try {
+            $request->validate([
+                'consumer_number' => 'required|string',
+            ]);
+
+            $apiUrl = config('services.mobikwik.url');
+            $uid = config('services.mobikwik.uid');
+            $pswd = config('services.mobikwik.pwd');
+
+            // ✅ Payload
+            // payload structure based on Mobikwik's API documentation
+
+            $jsonPayload = json_encode($payload);
+
+            // ✅ UPDATED HEADERS
+            $headers = [
+                'Content-Type: application/json',
+                'Accept: application/json',
+                'X-MClient: 14',
+            ];
+
+            // ✅ Generate Terminal cURL (with headers)
+            $curlCommand = 'curl -X POST "'.$apiUrl.'" ';
+            foreach ($headers as $header) {
+                $curlCommand .= '-H "'.$header.'" ';
+            }
+            $curlCommand .= "-d '".$jsonPayload."'";
+
+            // ✅ Log cURL (optional but professional)
+            \Log::info('Mobikwik CURL Command', [
+                'command' => $curlCommand,
+            ]);
+
             $ch = curl_init();
 
             curl_setopt_array($ch, [
@@ -132,7 +136,18 @@ class BillController extends Controller
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curlError = curl_error($ch);
 
+            // ✅ Handle cURL Error
+            if ($curlError) {
+                throw new \Exception($curlError);
+            }
+
             curl_close($ch);
+
+            // ✅ Log API response
+            \Log::info('Mobikwik API Response', [
+                'status' => $httpCode,
+                'response' => $response,
+            ]);
 
             $billData = [
                 'success' => true,
@@ -153,6 +168,13 @@ class BillController extends Controller
             return view('bill', compact('billData'));
 
         } catch (\Exception $e) {
+
+            // ✅ Proper error logging
+            \Log::error('Fetch Bill Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'error' => $e->getMessage(),
