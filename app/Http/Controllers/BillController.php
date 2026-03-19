@@ -97,6 +97,8 @@ class BillController extends Controller
             // ✅ Payload
             // payload structure based on Mobikwik's API documentation
 
+    
+
             $jsonPayload = json_encode($payload);
 
             // ✅ UPDATED HEADERS

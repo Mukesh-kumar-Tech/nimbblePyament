@@ -3,6 +3,25 @@
 <head>
     <title>Bill Details</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Toastr CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
+    <!-- JQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Toastr JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+    <style>
+        /* Modern Toastr Styling */
+        #toast-container > div {
+            opacity: 1 !important;
+            border-radius: 12px !important;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+            padding: 15px 15px 15px 50px !important;
+        }
+        .toast-success { background-color: #10b981 !important; }
+        .toast-error { background-color: #ef4444 !important; }
+        .toast-info { background-color: #3b82f6 !important; }
+        .toast-warning { background-color: #f59e0b !important; }
+    </style>
 </head>
 <body style="background: #f5f7fa;">
 
@@ -90,6 +109,25 @@
 <script type="module">
 import Checkout from "https://cdn.jsdelivr.net/npm/nimbbl_sonic@latest";
 
+// Toastr Configuration
+toastr.options = {
+    "closeButton": true,
+    "debug": false,
+    "newestOnTop": true,
+    "progressBar": true,
+    "positionClass": "toast-top-right",
+    "preventDuplicates": false,
+    "onclick": null,
+    "showDuration": "300",
+    "hideDuration": "1000",
+    "timeOut": "5000",
+    "extendedTimeOut": "1000",
+    "showEasing": "swing",
+    "hideEasing": "linear",
+    "showMethod": "fadeIn",
+    "hideMethod": "fadeOut"
+};
+
 document.getElementById('payBillForm')?.addEventListener('submit', async function(e) {
     e.preventDefault();
     
@@ -135,10 +173,12 @@ document.getElementById('payBillForm')?.addEventListener('submit', async functio
                     });
                     const result = await verifyResponse.json();
                     if (result.success) {
-                        alert(result.message);
-                        window.location.href = '/home';
+                        toastr.success(result.message);
+                        setTimeout(() => {
+                            window.location.href = '/home';
+                        }, 2000);
                     } else {
-                        alert(result.message);
+                        toastr.error(result.message);
                         btn.innerText = 'Pay Bill';
                         btn.disabled = false;
                     }
@@ -147,15 +187,15 @@ document.getElementById('payBillForm')?.addEventListener('submit', async functio
             setTimeout(() => {
                 btn.innerText = 'Pay Bill';
                 btn.disabled = false;
-            }, 2000);
+            }, 1000);
         } else {
-            alert("Order creation failed: " + data.message);
+            toastr.error("Order creation failed: " + data.message);
             btn.innerText = 'Pay Bill';
             btn.disabled = false;
         }
     } catch (error) {
         console.error("Error creating order:", error);
-        alert("An error occurred while creating the order.");
+        toastr.error("An error occurred while creating the order.");
         btn.innerText = 'Pay Bill';
         btn.disabled = false;
     }
