@@ -18,13 +18,15 @@ class PaymentController extends Controller
     public function createOrder(Request $request)
     {
         try {
-
             $request->validate([
                 'amount' => 'required|numeric',
                 'user_name' => 'required|string',
             ]);
 
-            // $wallet = Wallet::where('user_id', $user->id)->first();
+            $invoiceId = 'INV_'.time();
+            $amount = (float) $request->input('amount');
+            $userName = $request->input('user_name');
+              // $wallet = Wallet::where('user_id', $user->id)->first();
 
             // if (!$wallet) {
             //     throw new \Exception('Wallet not found');
@@ -46,11 +48,11 @@ class PaymentController extends Controller
                 'access_secret' => $accessSecret,
             ];
 
-            $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'REQUEST');
+            $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'REQUEST', $invoiceId);
 
             $tokenResponse = Http::post($tokenUrl, $tokenPayload);
 
-            $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'RESPONSE');
+            $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'RESPONSE', $invoiceId);
 
             if ($tokenResponse->failed()) {
                 return response()->json([
@@ -64,15 +66,13 @@ class PaymentController extends Controller
 
             // STEP 2 Create Order
             $orderUrl = $baseUrl.'/api/v3/create-order';
-            $amount = (float) $request->input('amount');
-            $userName = $request->input('user_name');
 
             $payload = [
                 'amount_before_tax' => $amount,
                 'tax' => 0,
                 'total_amount' => $amount,
                 'currency' => 'INR',
-                'invoice_id' => 'INV_'.time(),
+                'invoice_id' => $invoiceId,
 
                 'user' => [
                     'email' => 'test@gmail.com',
@@ -85,13 +85,13 @@ class PaymentController extends Controller
                 'callback_url' => url('/payment-callback'),
             ];
 
-            $this->customLog($orderUrl, 'POST', ['Authorization' => 'Bearer '.$token], $payload, 'REQUEST');
+            $this->customLog($orderUrl, 'POST', ['Authorization' => 'Bearer '.$token], $payload, 'REQUEST', $invoiceId);
 
             $response = Http::withToken($token)
                 ->acceptJson()
                 ->post($orderUrl, $payload);
 
-            $this->customLog($orderUrl, 'POST', $response->headers(), $response->json(), 'RESPONSE');
+            $this->customLog($orderUrl, 'POST', $response->headers(), $response->json(), 'RESPONSE', $invoiceId);
 
             // Show real API response for debugging
             if ($response->failed()) {
@@ -105,7 +105,6 @@ class PaymentController extends Controller
             $data = $response->json();
 
             $orderId = $data['order_id'] ?? null;
-            $invoiceId = $payload['invoice_id'];
 
             Transaction::create([
                 'invoice_id' => $invoiceId,
@@ -126,11 +125,11 @@ class PaymentController extends Controller
 
         } catch (\Exception $e) {
 
-            // ✅ Log error properly
-            \Log::error('Create Order Error', [
+            // ✅ Log error to payment.text
+            $this->customLog(url('/create-order-error'), 'EXCEPTION', [], [
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+                'trace' => substr($e->getTraceAsString(), 0, 500), // Limit trace size
+            ], 'ERROR', $invoiceId ?? 'unknown');
 
             return response()->json([
                 'status' => false,
@@ -143,8 +142,9 @@ class PaymentController extends Controller
     public function verifyPayment(Request $request)
     {
         try {
+            $invoiceId = $request->payload['order']['invoice_id'] ?? 'unknown';
 
-            $this->customLog(url('/verify-payment'), 'POST', $request->headers->all(), $request->all(), 'VERIFY_PAYMENT_REQUEST');
+            $this->customLog(url('/verify-payment'), 'POST', $request->headers->all(), $request->all(), 'VERIFY_PAYMENT_REQUEST', $invoiceId);
 
             $secretKey = env('NIMBBL_ACCESS_SECRET');
 
@@ -173,7 +173,7 @@ class PaymentController extends Controller
                     'type' => $type,
                     'received_signature' => $receivedSignature,
                 ],
-            ], 'VERIFY_PAYMENT_EXTRACTED_DATA');
+            ], 'VERIFY_PAYMENT_EXTRACTED_DATA', $invoiceId);
 
             $signatureData = $invoiceId.'|'.$transactionId.'|'.$amount.'|'.$currency.'|'.$status.'|'.$type;
 
@@ -195,11 +195,11 @@ class PaymentController extends Controller
                     'currency' => $currency,
                     'status' => $status,
                     'type' => $type,
-                ], 'VERIFY_PAYMENT_SIGNATURE_MATCH');
+                ], 'VERIFY_PAYMENT_SIGNATURE_MATCH', $invoiceId);
 
-                $txnResponse = $this->transactionEnquiry($transactionId);
+                $txnResponse = $this->transactionEnquiry($transactionId, $invoiceId);
 
-                $this->customLog(url('/transaction-enquiry'), 'POST', [], $txnResponse, 'TRANSACTION_ENQUIRY_RESPONSE');
+                $this->customLog(url('/transaction-enquiry'), 'POST', [], $txnResponse, 'TRANSACTION_ENQUIRY_RESPONSE', $invoiceId);
 
                 // It returns an array 'transaction' containing the transaction objects.
                 $paymentStatus = $txnResponse['transaction'][0]['payment_status'] ?? null;
@@ -210,7 +210,7 @@ class PaymentController extends Controller
                         'message' => 'Payment verified and confirmed Successfully',
                         'transaction_id' => $transactionId,
                         'status' => $paymentStatus,
-                    ], 'VERIFY_PAYMENT_RESPONSE');
+                    ], 'VERIFY_PAYMENT_RESPONSE', $invoiceId);
 
                     Transaction::where('invoice_id', $invoiceId)
                         ->update([
@@ -243,7 +243,7 @@ class PaymentController extends Controller
                 $this->customLog(url('/verify-payment'), 'FAILURE', [], [
                     'message' => 'Payment not confirmed from transaction enquiry',
                     'nimbbl_status' => $paymentStatus,
-                ], 'VERIFY_PAYMENT_RESPONSE');
+                ], 'VERIFY_PAYMENT_RESPONSE', $invoiceId);
 
                 Transaction::where('invoice_id', $invoiceId)
                     ->update([
@@ -274,7 +274,7 @@ class PaymentController extends Controller
                     'status' => $status,
                     'type' => $type,
                 ],
-            ], 'VERIFY_PAYMENT_RESPONSE');
+            ], 'VERIFY_PAYMENT_RESPONSE', $invoiceId);
 
             Transaction::where('invoice_id', $invoiceId)
                 ->update([
@@ -289,11 +289,11 @@ class PaymentController extends Controller
 
         } catch (\Exception $e) {
 
-            // ✅ Error Logging
-            \Log::error('Verify Payment Error', [
+            // ✅ Log error to payment.text
+            $this->customLog(url('/verify-payment-error'), 'EXCEPTION', [], [
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+                'trace' => substr($e->getTraceAsString(), 0, 500),
+            ], 'ERROR', $invoiceId ?? 'unknown');
 
             return response()->json([
                 'success' => false,
@@ -303,7 +303,7 @@ class PaymentController extends Controller
         }
     }
 
-    public function transactionEnquiry($transactionId)
+    public function transactionEnquiry($transactionId, $invoiceId = null)
     {
         try {
 
@@ -318,11 +318,11 @@ class PaymentController extends Controller
                 'access_secret' => $accessSecret,
             ];
 
-            $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'ENQUIRY_TOKEN_REQUEST');
+            $this->customLog($tokenUrl, 'POST', [], $tokenPayload, 'ENQUIRY_TOKEN_REQUEST', $invoiceId);
 
             $tokenResponse = Http::post($tokenUrl, $tokenPayload);
 
-            $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'ENQUIRY_TOKEN_RESPONSE');
+            $this->customLog($tokenUrl, 'POST', $tokenResponse->headers(), $tokenResponse->json(), 'ENQUIRY_TOKEN_RESPONSE', $invoiceId);
 
             if ($tokenResponse->failed()) {
                 return ['error' => 'Token generation failed for enquiry'];
@@ -336,24 +336,23 @@ class PaymentController extends Controller
                 'transaction_id' => $transactionId,
             ];
 
-            $this->customLog($enquiryUrl, 'POST', ['Authorization' => 'Bearer '.$token], $enquiryPayload, 'TRANSACTION_ENQUIRY_REQUEST');
+            $this->customLog($enquiryUrl, 'POST', ['Authorization' => 'Bearer '.$token], $enquiryPayload, 'TRANSACTION_ENQUIRY_REQUEST', $invoiceId);
 
             $response = Http::withToken($token)
                 ->acceptJson()
                 ->post($enquiryUrl, $enquiryPayload);
 
-            $this->customLog($enquiryUrl, 'POST', $response->headers(), $response->json(), 'TRANSACTION_ENQUIRY_RESPONSE');
+            $this->customLog($enquiryUrl, 'POST', $response->headers(), $response->json(), 'TRANSACTION_ENQUIRY_RESPONSE', $invoiceId);
 
             return $response->json();
 
         } catch (\Exception $e) {
 
-            // ✅ Log error
-            \Log::error('Transaction Enquiry Error', [
+            // ✅ Log error to payment.text
+            $this->customLog(url('/transaction-enquiry-error'), 'EXCEPTION', [], [
                 'transaction_id' => $transactionId,
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            ], 'ERROR', $invoiceId);
 
             return [
                 'error' => 'Something went wrong during transaction enquiry',
@@ -399,7 +398,8 @@ class PaymentController extends Controller
 
     public function paymentCallback(Request $request)
     {
-        $this->customLog(url('/payment-callback'), 'POST', $request->headers->all(), $request->all(), 'CALLBACK_REQUEST');
+        $invoiceId = $request->order_invoice_id ?? ($request->invoice_id ?? 'unknown');
+        $this->customLog(url('/payment-callback'), 'POST', $request->headers->all(), $request->all(), 'CALLBACK_REQUEST', $invoiceId);
 
         return response()->json([
             'status' => 'Payment response received',
@@ -408,9 +408,9 @@ class PaymentController extends Controller
     }
 
     /**
-     * Custom logging to storage/logs/custom_payment.txt
+     * Custom logging to storage/logs/payment.text
      */
-    private function customLog($url, $method, $headers, $body, $type = 'REQUEST')
+    private function customLog($url, $method, $headers, $body, $type = 'REQUEST', $identifier = null)
     {
         $importantHeaders = ['content-type', 'accept', 'authorization', 'access-key', 'nimbbl-token'];
         $filteredHeaders = array_intersect_key(
@@ -423,13 +423,13 @@ class PaymentController extends Controller
         }
 
         $timestamp = date('Y-m-d H:i:s');
-        $logMessage = "[{$timestamp}] {$type}\n";
+        $logMessage = "[{$timestamp}] " . ($identifier ? "[{$identifier}] " : "") . "{$type}\n";
         $logMessage .= "URL     : {$url}\n";
         $logMessage .= "METHOD  : {$method}\n";
         $logMessage .= 'HEADERS : '.json_encode($filteredHeaders, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n";
         $logMessage .= 'BODY    : '.json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n";
         $logMessage .= "--------------------------------------------------------------------------------\n";
 
-        file_put_contents(storage_path('logs/custom_payment.txt'), $logMessage, FILE_APPEND);
+        file_put_contents(storage_path('logs/payment.text'), $logMessage, FILE_APPEND);
     }
 }

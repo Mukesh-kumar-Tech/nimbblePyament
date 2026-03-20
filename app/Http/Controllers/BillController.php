@@ -20,7 +20,7 @@ class BillController extends Controller
     //     //     'cn' => trim($request->consumer_number),
     //     //     'op' => '31',      // ✅ numeric operator ID
     //     //     'uid' => config('services.mobikwik.uid'),
-    //     //     'pswd' => config('services.mobikwik.pwd'), // ⚠️ IMPORTANT: use pwd NOT pswd
+    //     //     'pswd' => config('services.mobikwik.pwd'), 
     //     // ];
 
     //     $payload = [
@@ -97,7 +97,7 @@ class BillController extends Controller
             // ✅ Payload
             // payload structure based on Mobikwik's API documentation
 
-    
+
 
             $jsonPayload = json_encode($payload);
 
